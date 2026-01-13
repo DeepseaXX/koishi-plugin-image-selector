@@ -11,6 +11,12 @@ export interface Config {
     filenameTemplate: string;
     debugMode: boolean;
     saveCommandName: string;
+    admins: {
+        userId: string;
+        sizeLimit: number;
+    }[];
+    allowNormalUserUpload: boolean;
+    normalUserSizeLimit: number;
 }
 export declare const Config: Schema<Config>;
 export declare function apply(ctx: Context, config: Config): void;

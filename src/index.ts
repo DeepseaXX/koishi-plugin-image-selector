@@ -23,6 +23,9 @@ export interface Config {
   filenameTemplate: string
   debugMode: boolean
   saveCommandName: string
+  admins: { userId: string; sizeLimit: number }[]
+  allowNormalUserUpload: boolean
+  normalUserSizeLimit: number
 }
 
 export const Config: Schema<Config> =
@@ -40,6 +43,14 @@ export const Config: Schema<Config> =
     Schema.object({
       debugMode: Schema.boolean().default(false).description('启用调试日志模式').experimental(),
     }).description('调试模式'),
+    Schema.object({
+      admins: Schema.array(Schema.object({
+        userId: Schema.string().description('用户ID'),
+        sizeLimit: Schema.number().description('上传尺寸限制(MB)'),
+      })).role('table').description('管理员列表'),
+      allowNormalUserUpload: Schema.boolean().default(true).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
+      normalUserSizeLimit: Schema.number().default(10).description('普通用户的上传尺寸限制（单位为MB）'),
+    }).description('权限设置'),
   ]);
 
 
@@ -161,6 +172,24 @@ export function apply(ctx: Context, config: Config) {
         return '请发送有效的图片或视频'
       }
 
+      // 检查权限和尺寸限制
+      const userId = session.userId
+      const adminConfig = config.admins?.find(admin => admin.userId === userId)
+      let sizeLimitMB = 0
+
+      if (adminConfig) {
+        sizeLimitMB = adminConfig.sizeLimit
+        loginfo(`用户 ${userId} 是管理员，尺寸限制: ${sizeLimitMB}MB`)
+      } else {
+        if (!config.allowNormalUserUpload) {
+          return '普通用户禁止上传，请联系管理员'
+        }
+        sizeLimitMB = config.normalUserSizeLimit
+        loginfo(`用户 ${userId} 是普通用户，尺寸限制: ${sizeLimitMB}MB`)
+      }
+
+      const sizeLimitBytes = sizeLimitMB * 1024 * 1024
+
       try {
         let targetPath = config.tempPath
         let folderName = ''
@@ -195,6 +224,14 @@ export function apply(ctx: Context, config: Config) {
           }
 
           const buffer = Buffer.from(file.data)
+
+          if (buffer.length > sizeLimitBytes) {
+            const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2)
+            loginfo(`文件大小超出限制: ${sizeMB}MB > ${sizeLimitMB}MB`)
+            await session.send(`文件 ${i + 1} 大小(${sizeMB}MB)超出限制(${sizeLimitMB}MB)，已跳过`)
+            continue
+          }
+
           const ext = getFileExtension(file, img.type)
 
           // 使用基础时间戳 + 微秒偏移确保唯一性
