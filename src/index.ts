@@ -135,9 +135,18 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 存图指令
-  ctx.command(`${config.saveCommandName} [角色名称] [...图片]`, { captureQuote: false })
+  ctx.command(`${config.saveCommandName} [关键词] [...图片]`, { captureQuote: false })
     .userFields(['id', 'name', 'authority'])
-    .action(async ({ session }, 角色名称, ...图片) => {
+    .action(async ({ session }, keyword, ...图片) => {
+      // 预处理：检查第一参数是否为图片
+      if (keyword) {
+        const elements = h.parse(keyword)
+        if (elements.some(el => ['img', 'mface', 'image', 'video'].includes(el.type))) {
+          图片.unshift(keyword)
+          keyword = undefined
+        }
+      }
+
       // 优先检查引用消息中的图片
       if (session.quote) {
         loginfo('检测到引用消息，尝试从引用消息中提取图片')
@@ -150,16 +159,6 @@ export function apply(ctx: Context, config: Config) {
         }
       }
 
-      // 如果没有图片参数且没有引用消息中的图片，则交互式获取
-      if (图片.length === 0) {
-        await session.send('请发送图片或视频')
-        const promptResult = await session.prompt(config.promptTimeout * 1000)
-        if (!promptResult) {
-          return '未收到图片或视频'
-        }
-        图片 = [promptResult]
-      }
-
       // 解析所有图片参数
       let allImages = []
       for (const 图片Item of 图片) {
@@ -168,9 +167,33 @@ export function apply(ctx: Context, config: Config) {
         allImages.push(...images)
       }
 
+      // 如果没有图片(参数或引用)，尝试交互式获取
       if (allImages.length === 0) {
-        return '请发送有效的图片或视频'
+        await session.send('请发送图片或视频')
+        const promptResult = await session.prompt(config.promptTimeout * 1000)
+        if (!promptResult) {
+          return '未收到图片或视频'
+        }
+        const elements = h.parse(promptResult)
+        const images = elements.filter(el => ['img', 'mface', 'image', 'video'].includes(el.type))
+        allImages.push(...images)
       }
+
+      if (allImages.length === 0) {
+        return '未收到有效的图片或视频'
+      }
+
+      // 检查是否已有分类（关键词），如果没有则询问
+      if (!keyword) {
+        await session.send('请回复要保存的分类名称或关键词（等待30秒超时）')
+        const reply = await session.prompt(30 * 1000)
+        if (!reply) {
+          return '等待超时，未执行保存'
+        }
+        keyword = reply.trim()
+      }
+
+
 
       // 检查权限和尺寸限制
       const userId = session.userId
@@ -193,16 +216,28 @@ export function apply(ctx: Context, config: Config) {
       try {
         let targetPath = config.tempPath
         let folderName = ''
+        let matched = false
 
-        // 如果指定了角色名称，则查找对应的文件夹
-        if (角色名称) {
-          const matchedFolder = await findCharacterFolder(角色名称)
-          if (matchedFolder) {
-            folderName = matchedFolder
-            targetPath = join(config.tempPath, folderName)
-            loginfo('使用匹配的角色文件夹:', folderName)
+        // 尝试在图片库中匹配文件夹 (使用发图相同的逻辑)
+        if (keyword) {
+          const imageFolders = await fs.readdir(config.imagePath, { withFileTypes: true })
+          const matchedFolders = []
+          for (const folder of imageFolders) {
+            if (!folder.isDirectory()) continue
+            const folderName = folder.name
+            const aliases = folderName.split('-')
+            if (aliases.includes(keyword)) {
+              matchedFolders.push(folderName)
+            }
+          }
+
+          if (matchedFolders.length > 0) {
+            folderName = matchedFolders[0]
+            targetPath = join(config.imagePath, folderName)
+            matched = true
+            loginfo('在图片库匹配到文件夹:', folderName)
           } else {
-            return `未找到角色"${角色名称}"对应的文件夹，请检查角色名称或别名是否正确，或该人物尚未收录，欢迎催更`
+            loginfo(`关键词 "${keyword}" 未在图片库找到匹配文件夹，将保存到临时目录`)
           }
         }
 
@@ -261,11 +296,11 @@ export function apply(ctx: Context, config: Config) {
           loginfo(`保存文件 ${i + 1}/${allImages.length}:`, filename)
         }
 
-        const resultMessage = 角色名称
-          ? `已保存 ${savedCount} 个文件到"${角色名称}"文件夹`
-          : `已保存 ${savedCount} 个文件到临时文件夹`
-
-        return resultMessage
+        if (matched) {
+          return `已保存 ${savedCount} 个文件到"${folderName}"文件夹`
+        } else {
+          return `找不到"${keyword}"文件夹，已保存 ${savedCount} 个文件到临时文件夹`
+        }
       } catch (error) {
         return `保存失败: ${error.message}`
       }
