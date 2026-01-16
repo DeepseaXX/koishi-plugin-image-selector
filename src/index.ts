@@ -3,7 +3,7 @@ import { Context, Schema, h } from 'koishi'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 
-export const name = 'image-selecter'
+export const name = 'image-selector'
 export const inject = {
   required: ['http', 'logger']
 };
