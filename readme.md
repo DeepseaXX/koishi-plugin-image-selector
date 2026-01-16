@@ -1,7 +1,8 @@
 # koishi-plugin-image-selecter
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-image-selecter?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-image-selecter)
+[![npm](https://img.shields.io/npm/v/koishi-plugin-image-selecter?style=flat-square)](https://www.npmjs.com/package/@deepseaxx/koishi-plugin-image-selector)
 
+感谢原作者[995837081/koishi-plugin-image-selecter](https://github.com/995837081/koishi-plugin-image-selecter)
 ## 功能特性
 
 ### 🎲 随机发图
@@ -92,7 +93,7 @@ ${guildId}_${userId}_${index}${ext}
 ```
 文件夹名: 角色1-别名1-别名2
 用户输入: 角色1  ✅ 匹配
-用户输入: 别名1  ✅ 匹配  
+用户输入: 别名1  ✅ 匹配
 用户输入: 别名2  ✅ 匹配
 用户输入: 其他   ❌ 不匹配
 ```
