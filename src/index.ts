@@ -52,13 +52,14 @@ export const Config: Schema<Config> =
         userId: Schema.string().description('用户ID'),
         sizeLimit: Schema.number().description('上传尺寸限制(MB)'),
       })).role('table').description('管理员列表'),
-      allowNormalUserUpload: Schema.boolean().default(true).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
-      normalUserSizeLimit: Schema.number().default(10).description('普通用户的上传尺寸限制（单位为MB）'),
+      allowNormalUserUpload: Schema.boolean().default(false).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
+      normalUserSizeLimit: Schema.number().default(3).description('普通用户的上传尺寸限制（单位为MB）'),
     }).description('权限设置'),
   ]);
 
 
 export function apply(ctx: Context, config: Config) {
+  config = config || {} as Config
 
   function loginfo(...args: any[]) {
     if (config.debugMode) {
