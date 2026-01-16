@@ -9,8 +9,17 @@ export interface Config {
     imagePath: string;
     promptTimeout: number;
     filenameTemplate: string;
-    debugMode: boolean;
     saveCommandName: string;
+    saveFailFallback: boolean;
+    listCommandName: string;
+    admins: {
+        userId: string;
+        sizeLimit: number;
+    }[];
+    allowNormalUserUpload: boolean;
+    normalUserSizeLimit: number;
+    maxout: number;
+    debugMode: boolean;
 }
 export declare const Config: Schema<Config>;
 export declare function apply(ctx: Context, config: Config): void;
