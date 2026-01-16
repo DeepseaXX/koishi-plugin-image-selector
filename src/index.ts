@@ -36,16 +36,16 @@ export const Config: Schema<Config> =
       listCommandName: Schema.string().default('图库列表').description('图库列表指令名称'),
     }).description('图库列表'),
     Schema.object({
+      maxout: Schema.number().default(5).description('一次最大输出图片数量'),
+      imagePath: Schema.string().required().description('图片库路径').role('textarea', { rows: [2, 4] }),
+    }).description('发图功能'),
+    Schema.object({
       saveCommandName: Schema.string().default('存图').description('存图指令名称'),
       tempPath: Schema.string().required().description('临时存储路径').role('textarea', { rows: [2, 4] }),
       promptTimeout: Schema.number().default(30).description('等待用户发送图片的超时时间 (秒)'),
       filenameTemplate: Schema.string().role('textarea', { rows: [2, 4] })
         .default("${date}-${time}-${index}-${guildId}-${userId}${ext}").description('文件名模板，支持变量: ${userId}, ${username}, ${timestamp}, ${date}, ${time}, ${index}, ${ext}, ${guildId}, ${channelId}'),
     }).description('存图功能'),
-    Schema.object({
-      maxout: Schema.number().default(5).description('一次最大输出图片数量'),
-      imagePath: Schema.string().required().description('图片库路径').role('textarea', { rows: [2, 4] }),
-    }).description('发图功能'),
     Schema.object({
       allowNormalUserUpload: Schema.boolean().default(false).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
       normalUserSizeLimit: Schema.number().default(3).description('普通用户的上传尺寸限制（单位为MB）'),
