@@ -21,12 +21,12 @@ export interface Config {
   imagePath: string
   promptTimeout: number
   filenameTemplate: string
-  debugMode: boolean
   saveCommandName: string
   listCommandName: string
   admins: { userId: string; sizeLimit: number }[]
   allowNormalUserUpload: boolean
   normalUserSizeLimit: number
+  debugMode: boolean
 }
 
 export const Config: Schema<Config> =
