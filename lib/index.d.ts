@@ -9,7 +9,6 @@ export interface Config {
     imagePath: string;
     promptTimeout: number;
     filenameTemplate: string;
-    debugMode: boolean;
     saveCommandName: string;
     listCommandName: string;
     admins: {
@@ -18,6 +17,7 @@ export interface Config {
     }[];
     allowNormalUserUpload: boolean;
     normalUserSizeLimit: number;
+    debugMode: boolean;
 }
 export declare const Config: Schema<Config>;
 export declare function apply(ctx: Context, config: Config): void;
