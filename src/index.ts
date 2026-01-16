@@ -42,11 +42,11 @@ export const Config: Schema<Config> =
     }).description('发图功能'),
     Schema.object({
       saveCommandName: Schema.string().default('存图').description('存图指令名称'),
-      saveFailFallback: Schema.boolean().default(true).description('匹配关键词失败时是否保存到临时目录（关闭则直接取消保存）'),
       tempPath: Schema.string().required().description('临时存储路径').role('textarea', { rows: [2, 4] }),
-      promptTimeout: Schema.number().default(30).description('等待用户发送图片的超时时间 (秒)'),
       filenameTemplate: Schema.string().role('textarea', { rows: [2, 4] })
         .default("${date}-${time}-${index}-${guildId}-${userId}${ext}").description('文件名模板，支持变量: ${userId}, ${username}, ${timestamp}, ${date}, ${time}, ${index}, ${ext}, ${guildId}, ${channelId}'),
+      promptTimeout: Schema.number().default(30).description('等待用户发送图片的超时时间 (秒)'),
+      saveFailFallback: Schema.boolean().default(true).description('匹配关键词失败时是否保存到临时目录（关闭则直接取消保存）'),
     }).description('存图功能'),
     Schema.object({
       allowNormalUserUpload: Schema.boolean().default(false).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
