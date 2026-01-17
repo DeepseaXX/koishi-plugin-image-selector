@@ -385,7 +385,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 图库列表指令
-  ctx.command(config.listCommandName)
+  ctx.command(`${config.listCommandName}`)
     .usage('查看当前所有可用的图库关键词及别名列表。')
     .action(async ({ session }) => {
       try {
@@ -405,13 +405,6 @@ export function apply(ctx: Context, config: Config) {
           const mainName = parts[0]
           const aliases = parts.slice(1)
 
-          // 更新示例（使用第一个找到的有效文件夹）
-          if (!firstExample.found && aliases.length > 0) {
-            firstExample = { main: mainName, alias: aliases[0], found: true }
-          } else if (!firstExample.found) {
-            firstExample = { main: mainName, alias: mainName, found: true }
-          }
-
           if (aliases.length > 0) {
             messageLines.push(`${mainName} 别名：${aliases.join(', ')}`)
           } else {
@@ -423,7 +416,7 @@ export function apply(ctx: Context, config: Config) {
           return '图库为空'
         }
 
-        const header = `发送指令【${firstExample.main}】或别名【${firstExample.alias}】 随机返回图片`
+        const header = `发送指令或别名随机返回图片，也可使用“${config.sendCommandName} 关键词 数量”`
         return [header, ...messageLines].join('\n')
 
       } catch (error) {
@@ -541,7 +534,7 @@ export function apply(ctx: Context, config: Config) {
 
   // 发图指令
   ctx.command(`${config.sendCommandName} <keyword:text>`)
-    .usage(`发送图片。\n用法：${config.sendCommandName} <关键词> [数量]\n示例：${config.sendCommandName} 猫图 5`)
+    .usage(`发送图片。使用 "${config.listCommandName}" 查看所有关键词\n用法：${config.sendCommandName} <关键词> [数量]\n示例：${config.sendCommandName} 猫图 5`)
     .action(async ({ session }, keyword) => {
       if (!keyword) {
         await session.execute(`${config.sendCommandName} -h`)
