@@ -1,4 +1,4 @@
-import { Context, Schema, h } from 'koishi'
+import { Context, Schema, h, Session } from 'koishi'
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ export interface Config {
   promptTimeout: number
   filenameTemplate: string
   saveCommandName: string
+  sendCommandName: string
   saveFailFallback: boolean
   listCommandName: string
 
@@ -37,6 +38,7 @@ export const Config: Schema<Config> =
       listCommandName: Schema.string().default('图库列表').description('图库列表指令名称'),
     }).description('图库列表'),
     Schema.object({
+      sendCommandName: Schema.string().default('发图').description('发图指令名称'),
       maxout: Schema.number().default(5).description('一次最大输出图片数量'),
       imagePath: Schema.string().required().description('图片库路径').role('textarea', { rows: [2, 4] }),
     }).description('发图功能'),
@@ -152,6 +154,14 @@ export function apply(ctx: Context, config: Config) {
 
   // 存图指令
   ctx.command(`${config.saveCommandName} [关键词] [...图片]`, { captureQuote: false })
+    .usage(`存图方式：
+1. 直接存图：${config.saveCommandName} 关键词 [图片]
+2. 交互式：发送 ${config.saveCommandName} 后按提示操作
+3. 引用存图：回复图片消息并发送 ${config.saveCommandName} [关键词]
+
+关于“关键词”：
+关键词即文件夹名称或其别名。系统自动匹配文件夹，文件夹名格式为“主名-别名1-别名2”。
+例如文件夹名为“猫图-mt”，则发送“猫图”或“mt”均可匹配到该文件夹并存入图片。若关键词不存在，则根据配置创建新文件夹或存入临时目录。`)
     .userFields(['id', 'name', 'authority'])
     .action(async ({ session }, keyword, ...图片) => {
       // 预处理：检查第一参数是否为图片
@@ -375,14 +385,14 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 图库列表指令
-  ctx.command(config.listCommandName)
+  ctx.command(`${config.listCommandName}`)
+    .usage('查看当前所有可用的图库关键词及别名列表。')
     .action(async ({ session }) => {
       try {
         const folders = await fs.readdir(config.imagePath, { withFileTypes: true })
         let messageLines = []
 
         // 收集并格式化文件夹信息
-        let firstExample: { main: string; alias: string; found?: boolean } = { main: '猪图', alias: 'pig' }
         let hasFolders = false
 
         for (const folder of folders) {
@@ -393,13 +403,6 @@ export function apply(ctx: Context, config: Config) {
           const parts = folderName.split('-')
           const mainName = parts[0]
           const aliases = parts.slice(1)
-
-          // 更新示例（使用第一个找到的有效文件夹）
-          if (!firstExample.found && aliases.length > 0) {
-            firstExample = { main: mainName, alias: aliases[0], found: true }
-          } else if (!firstExample.found) {
-            firstExample = { main: mainName, alias: mainName, found: true }
-          }
 
           if (aliases.length > 0) {
             messageLines.push(`${mainName} 别名：${aliases.join(', ')}`)
@@ -412,7 +415,7 @@ export function apply(ctx: Context, config: Config) {
           return '图库为空'
         }
 
-        const header = `发送指令【${firstExample.main}】或别名【${firstExample.alias}】 随机返回图片`
+        const header = `发送指令或别名随机返回图片，也可使用“${config.sendCommandName} 关键词 数量”`
         return [header, ...messageLines].join('\n')
 
       } catch (error) {
@@ -420,18 +423,8 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 发图中间件
-  ctx.middleware(async (session, next) => {
-    const input = session.stripped.content.trim()
-    if (!input) return next()
-
-    // loginfo('收到消息:', {
-    //   userId: session.userId,
-    //   username: session.username,
-    //   guildId: session.guildId,
-    //   channelId: session.channelId,
-    //   content: input
-    // })
+  async function processImageRequest(session: Session, input: string) {
+    if (!input) return false
 
     try {
       const folders = await fs.readdir(config.imagePath, { withFileTypes: true })
@@ -459,7 +452,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       if (possibleMatches.length === 0) {
-        return next()
+        return false
       }
 
       // 按别名长度降序排序，取最长匹配
@@ -482,23 +475,15 @@ export function apply(ctx: Context, config: Config) {
       // 解析数量
       let count = 1
       if (suffix) {
-        const parsed = parseInt(suffix, 10)
-        if (!isNaN(parsed) && parsed > 0 && String(parsed) === suffix) {
-          count = parsed
+        // 如果 input = "alias" + "suffix"
+        // 比如 "猫图 5" -> suffix="5".
+        // "猫图5" -> suffix="5".
+        // "猫图 abc" -> suffix="abc".
+        if (/^\d+$/.test(suffix)) {
+          count = Math.min(parseInt(suffix, 10), config.maxout)
         } else {
-          // 尝试处理 "5" 这种纯数字或者 " 5"
-          // 如果 suffix 不是纯数字（允许负号但不处理），则 count 维持 1
-          // 只有当 input = alias + space + number 或 input = alias + number 时才尝试。
-          // 但上面的 logic 是 trim() 过的。
-          // 如果 suffix 是 "abc"，parseInt("abc") -> NaN.
-          // 如果 suffix 是 "100abc", parseInt -> 100.
-          // 需求说 "有任何非整数...只发送一张"。所以 "100abc" 应该发送 1 张。
-          // 所以我们应该严格检查 suffix 是否为数字。
-          if (/^\d+$/.test(suffix)) {
-            count = Math.min(parseInt(suffix, 10), config.maxout)
-          } else {
-            count = 1
-          }
+          // suffix 不是纯数字，视为无效数量，保持 count=1
+          count = 1
         }
       }
 
@@ -516,7 +501,11 @@ export function apply(ctx: Context, config: Config) {
       )
 
       if (mediaFiles.length === 0) {
-        return '该文件夹暂无图片或视频'
+        // 匹配到了文件夹但为空，也算作处理了? 或者不算?
+        // 按照旧逻辑，这里 return '该文件夹暂无图片或视频' (给中间件返回 string 意味着回复消息)
+        // 中间件中 return string 是合法的。
+        await session.send('该文件夹暂无图片或视频')
+        return true
       }
 
       // 循环发送图片
@@ -532,14 +521,42 @@ export function apply(ctx: Context, config: Config) {
           : h.image(filePath)
 
         await session.send(element)
-        // 稍微延迟一下？不，session.send是异步的但这里await了，所以是顺序发送。
       }
 
-      return next()
+      return true
+
     } catch (error) {
       loginfo('发图失败:', error)
+      return false
     }
+  }
 
+  // 发图指令
+  ctx.command(`${config.sendCommandName} <keyword:text>`)
+    .usage(`发送图片。使用 "${config.listCommandName}" 查看所有关键词\n用法：${config.sendCommandName} <关键词> [数量]\n示例：${config.sendCommandName} 猫图 5`)
+    .action(async ({ session }, keyword) => {
+      if (!keyword) {
+        await session.execute(`${config.sendCommandName} -h`)
+        return
+      }
+      // 复用逻辑
+      const processed = await processImageRequest(session, keyword)
+      if (!processed) {
+        // 如果需要和“猫图”完全一致的逻辑：
+        // "猫图" 不存在 -> 无反应
+        // 这里的 processed 为 false 表示没找到匹配。
+        // 所以无反应。
+      }
+    })
+
+  // 发图中间件
+  ctx.middleware(async (session, next) => {
+    const input = session.stripped.content.trim()
+    if (!input) return next()
+
+    // loginfo('收到消息:', { ... })
+
+    await processImageRequest(session, input)
     return next()
   }, true)
 }
