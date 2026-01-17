@@ -38,7 +38,7 @@ export const Config: Schema<Config> =
       listCommandName: Schema.string().default('图库列表').description('图库列表指令名称'),
     }).description('图库列表'),
     Schema.object({
-      sendCommandName: Schema.string().default('发送图片').description('发图指令名称'),
+      sendCommandName: Schema.string().default('发图').description('发图指令名称'),
       maxout: Schema.number().default(5).description('一次最大输出图片数量'),
       imagePath: Schema.string().required().description('图片库路径').role('textarea', { rows: [2, 4] }),
     }).description('发图功能'),
