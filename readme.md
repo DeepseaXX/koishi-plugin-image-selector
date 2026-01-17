@@ -1,6 +1,6 @@
 # koishi-plugin-image-selector
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-image-selecter?style=flat-square)](https://www.npmjs.com/package/@deepseaxx/koishi-plugin-image-selector)
+[![npm](https://img.shields.io/npm/v/@deepseaxx/koishi-plugin-image-selector?style=flat-square)](https://www.npmjs.com/package/@deepseaxx/koishi-plugin-image-selector)
 
 感谢原作者[995837081/koishi-plugin-image-selecter](https://github.com/995837081/koishi-plugin-image-selecter)
 
