@@ -24,9 +24,8 @@ export interface Config {
   saveCommandName: string
   saveFailFallback: boolean
   listCommandName: string
-  admins: { userId: string; sizeLimit: number }[]
-  allowNormalUserUpload: boolean
-  normalUserSizeLimit: number
+
+  userLimits: Record<string, number>
   maxout: number
   debugMode: boolean
 }
@@ -49,12 +48,10 @@ export const Config: Schema<Config> =
       saveFailFallback: Schema.boolean().default(true).description('匹配关键词失败时是否保存到临时目录（关闭则直接取消保存）'),
     }).description('存图功能'),
     Schema.object({
-      allowNormalUserUpload: Schema.boolean().default(false).description('是否允许普通用户上传操作（关闭后仅允许列表中用户上传）'),
-      normalUserSizeLimit: Schema.number().default(3).description('普通用户的上传尺寸限制（单位为MB）'),
-      admins: Schema.array(Schema.object({
-        userId: Schema.string().description('用户ID'),
-        sizeLimit: Schema.number().description('上传尺寸限制(MB)'),
-      })).role('table').description('管理员列表'),
+      userLimits: Schema.dict(Schema.number().min(0).step(0.1))
+        .role('table')
+        .description('用户上传限制列表 (MB)。键填写用户ID，值填写限制大小。必须包含键为 "default" 的项作为默认限制。设置为 0 或非法值代表禁止上传。')
+        .default({ default: 0 }),
     }).description('权限设置'),
     Schema.object({
       debugMode: Schema.boolean().default(false).description('启用调试日志模式').experimental(),
@@ -206,20 +203,34 @@ export function apply(ctx: Context, config: Config) {
 
 
       // 检查权限和尺寸限制
+      // 检查权限和尺寸限制
       const userId = session.userId
-      const adminConfig = config.admins?.find(admin => admin.userId === userId)
-      let sizeLimitMB = 0
+      const limits = config.userLimits || {}
 
-      if (adminConfig) {
-        sizeLimitMB = adminConfig.sizeLimit
-        loginfo(`用户 ${userId} 是管理员，尺寸限制: ${sizeLimitMB}MB`)
-      } else {
-        if (!config.allowNormalUserUpload) {
-          return '普通用户禁止上传，请联系管理员'
-        }
-        sizeLimitMB = config.normalUserSizeLimit
-        loginfo(`用户 ${userId} 是普通用户，尺寸限制: ${sizeLimitMB}MB`)
+      // 查找顺序: 用户ID -> default -> 0
+      let limit = limits[userId]
+
+      if (limit === undefined || limit === null) {
+        limit = limits['default']
       }
+
+      // 如果 default 也不存在，或者值为 undefined/null，则默认为 0
+      if (limit === undefined || limit === null) {
+        limit = 0
+      }
+
+      // 非法值（负数等）视为 0
+      if (typeof limit !== 'number' || limit < 0 || isNaN(limit)) {
+        limit = 0
+      }
+
+      const sizeLimitMB = limit
+
+      if (sizeLimitMB <= 0) {
+        return '当前用户无上传权限或已被禁止上传'
+      }
+
+      loginfo(`用户 ${userId} 上传限制: ${sizeLimitMB}MB`)
 
       const sizeLimitBytes = sizeLimitMB * 1024 * 1024
 
