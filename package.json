@@ -1,9 +1,9 @@
 {
-  "name": "@deepseaxx/koishi-plugin-image-selector",
+  "name": "@saltnya/koishi-plugin-image-selector",
   "description": "A powerful Koishi plugin for random image/video sending and user image storage with alias system support",
   "preview": true,
   "hidden": true,
-  "version": "0.5.2",
+  "version": "0.6.3",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -11,15 +11,15 @@
     "src"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/DeepseaXX/koishi-plugin-image-selector",
+  "homepage": "https://github.com/SaltNya/koishi-plugin-image-selector",
   "bugs": {
-    "url": "https://github.com/DeepseaXX/koishi-plugin-image-selector/issues"
+    "url": "https://github.com/SaltNya/koishi-plugin-image-selector/issues"
   },
   "koishi": {
     "browser": true,
     "description": {
-      "en": "Supports random image sending and user image storage. Features alias folder matching, multiple storage methods, customizable filename templates, and intelligent file type detection.",
-      "zh": "支持随机图片发送和用户存图功能。包含别名文件夹匹配、多种存图方式、自定义文件名模板和智能文件类型检测等特性。"
+      "en": "Supports random image sending and user image storage. Features alias folder matching, multiple storage methods, customizable filename templates, and intelligent file type detection. Also supports group isolation, keyword/alias management, upload permission control, and multiple trigger modes.",
+      "zh": "支持随机图片发送和用户存图功能。包含别名文件夹匹配、多种存图方式、自定义文件名模板和智能文件类型检测等特性。同时支持群组隔离、关键词/别名管理、上传权限控制及多种触发模式。"
     }
   },
   "keywords": [

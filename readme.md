@@ -1,8 +1,9 @@
 # koishi-plugin-image-selector
 
-[![npm](https://img.shields.io/npm/v/@deepseaxx/koishi-plugin-image-selector?style=flat-square)](https://www.npmjs.com/package/@deepseaxx/koishi-plugin-image-selector)
+[![npm](https://img.shields.io/npm/v/@saltnya/koishi-plugin-image-selector?style=flat-square)](https://www.npmjs.com/package/@saltnya/koishi-plugin-image-selector)
 
 感谢原作者 [995837081/koishi-plugin-image-selecter](https://github.com/995837081/koishi-plugin-image-selecter)
+感谢Fork作者 [DeepseaXX/koishi-plugin-image-selector](https://github.com/DeepseaXX/koishi-plugin-image-selector)
 
 ---
 
@@ -19,8 +20,8 @@
 直接发送关键词触发，语法：`<关键词> [数量]`
 
 **配置项：**
-- `maxout`（默认 `5`）：单次最大发图数量上限
-- `matchMode`（默认 `fuzzy`）：触发模式
+- `maxout`（默认 `1`）：单次最大发图数量上限
+- `matchMode`（默认 `none`）：触发模式
   - `fuzzy` 模糊匹配：消息以关键词**开头**即触发，后缀非数字时发 1 张
   - `exact` 精确匹配：仅 `关键词` 或 `关键词 数字` 这两种格式触发，其余忽略
   - `none` 禁用模式：关键词不直接触发，仅限通过指令（如`发图`）调用
@@ -47,31 +48,33 @@
 
 ---
 
-### 📤 发图指令 `默认: 发图` · 可自定义（`sendCommandName`）
+### 📤 发图指令 `默认: 随机` · 可自定义（`sendCommandName`）
 
 与关键词触发逻辑完全相同，区别是使用显式指令前缀。
+和关键词直接可以没有空格
 
-语法：`发图 <关键词> [数量]`
+语法：`随机 <关键词> [数量]`
 
 ```
-发图 猫图      → 发 1 张
-发图 猫图 3    → 发 3 张
+随机 猫图      → 发 1 张
+随机猫图       → 发 1 张
+随机 猫图 3    → 发 3 张（需要更改最大数量）
 ```
 
 ---
 
-### 📥 存图指令 `默认: 存图` · 可自定义（`saveCommandName`）
+### 📥 存图指令 `默认: 添加` · 可自定义（`saveCommandName`）
 
-语法：`存图 [关键词] [图片...]`，支持三种方式：
+语法：`添加 [关键词] [图片...]`，支持三种方式：
 
 ```
-存图 猫图 [图片]       → 直接带图，存入"猫图"分类
-[回复一张图] 存图      → 引用消息存图
-存图                   → 交互式：机器人提示后再发图和关键词
+添加 猫图 [图片]       → 直接带图，存入"猫图"分类
+[回复一张图] 添加      → 引用消息存图
+添加                   → 交互式：机器人提示后再发图和关键词
 ```
 
 **配置项：**
-- `tempPath`（必填）：临时存储目录路径
+- `basePath`（必填）：图片库根目录路径
 - `saveFailFallback`（默认 `true`）：关键词匹配失败时的行为，`true` 存入临时目录，`false` 直接取消
 - `promptTimeout`（默认 `30`）：交互式存图的等待超时，单位秒
 - `filenameTemplate`：存图文件名模板，详见"文件名模板"
@@ -92,27 +95,98 @@ default: 0          → 默认所有人禁止上传
 
 ---
 
-### 📋 图库列表指令 `默认: 图库列表` · 可自定义（`listCommandName`）
+### 📋 图库列表指令 `默认: 查看列表` · 可自定义（`listCommandName`）
 
-列出所有可用分类及其别名。
+列出所有可用分类及其别名与文件夹其下图片的数量。
 
 ```
-图库列表
-→ 猫咪 别名：猫图, 喵星人
-→ 风景
-→ 狗狗 别名：狗图
+查看列表列表
+→ 猫咪 别名：猫图, 喵星人   有37张图片
+→ 风景   有2张图片
+→ 狗狗 别名：狗图   有1张图片
+→ 总共有 40 张图片。
 ```
 
 ---
 
-### 🔄 刷新图库指令 `默认: 刷新图库` · 可自定义（`refreshCommandName`）
+### 🔄 刷新图库指令 `默认: 刷新列表` · 可自定义（`refreshCommandName`）
 
 手动刷新文件夹缓存。添加、删除或重命名文件夹后执行，立即生效无需重启。
 
 ```
-刷新图库
+刷新列表
 → 图库缓存已刷新，当前共有 15 个文件夹
 ```
+
+---
+
+### 🏷️ 添加关键词指令 `默认: 添加关键词` · 可自定义（'createCommandName'）
+
+创建一个新的关键词文件夹，支持同时设置多个别名。
+
+语法：'添加关键词 <主关键词> [别名...]'
+```
+添加关键词 猫猫                    → 创建文件夹"猫猫"
+添加关键词 猫咪 猫图 喵星人        → 创建文件夹"猫咪-猫图-喵星人"
+```
+**别名冲突检测：** 创建时会自动检测关键词/别名是否已被其他文件夹使用，避免冲突。
+
+---
+
+### 🏷️ 添加别名指令 `默认: 添加别名` · 可自定义（'addAliasCommandName'）
+为现有的关键词文件夹添加新别名。
+
+语法：'添加别名 <关键词> <新别名>'
+```
+添加别名 猫咪 猫主子
+→ 原文件夹"猫咪-猫图" 重命名为 "猫咪-猫图-猫主子"
+```
+**别名冲突检测：** 添加时会自动检测别名是否已被其他文件夹使用。
+
+---
+
+### 群组隔离功能
+支持为不同群组配置独立的图片库，实现群组间的数据隔离。
+
+**配置示例**
+```
+groupMappings:
+  - groupName: group_0
+    guildIds: ['123456789', '987654321']
+  - groupName: group_1
+    guildIds: ['111111111']
+fallbackGroupName: default
+enableForUnmappedGroups: false
+```
+
+**效果说明**
+
+| 群号 | 使用文件夹 | 说明 |
+|:----:|:----:|:----:|
+| 123456789 | 'group_0' | 已映射到 group_0 |
+| 987654321 | 'group_0' | 已映射到 group_0 |
+| 111111111 | 'group_1' | 已映射到 group_1 |
+| 其他群 | 无法使用 | 'enableForUnmappedGroups: false' |
+
+**目录结构**
+```
+basePath/
+├── group_0/
+│   └── images/
+│       ├── 猫咪-猫图/
+│       └── 风景/
+├── group_1/
+│   └── images/
+│       ├── 狗狗/
+│       └── 美食/
+└── default/
+    └── images/
+        └── 默认分类/
+```
+---
+
+## 猫娘化回复功能
+  开启后Bot回复会带“喵~”等可爱语气，关闭则书面化回复
 
 ---
 
@@ -154,22 +228,27 @@ default: 0          → 默认所有人禁止上传
 ### 目录结构
 
 ```
-images/                  ← imagePath（图片库）
-├── 猫咪-猫图-喵星人/
-│   ├── 1.jpg
-│   └── 2.gif
-└── 风景-自然/
-    └── sunset.mp4
-
-temp/                    ← tempPath（临时存储）
+basePath/                    ← 配置的 basePath
+├── group_a/                 ← 群组文件夹
+│   └── images/              ← 图片库目录
+│       ├── 猫咪-猫图-喵星人/
+│       │   ├── 1.jpg
+│       │   └── 2.gif
+│       └── 风景-自然/
+│           └── sunset.mp4
+│   └── temp/                ← 临时存储（自动创建）
+└── default/                 ← 默认群组文件夹
+    └── images/
+        └── ...
 ```
 
 ### 注意事项
 
-1. `imagePath` 和 `tempPath` 必须存在且有读写权限
+1. `basePath` 必须存在且有读写权限
 2. `userLimits` 必须包含 `userId` 为 `default` 的项作为全局默认值
 3. 文件夹名避免使用特殊字符，别名之间用 `-` 分割
 4. 定期清理临时文件夹，避免占用过多空间
+5. 修改群组映射后建议执行一次 '刷新列表' 确保缓存更新
 
 ---
 
