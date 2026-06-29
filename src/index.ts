@@ -1,4 +1,4 @@
-﻿import { Context, Schema, h, Session } from 'koishi'
+import { Context, Schema, h, Session } from 'koishi'
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
@@ -30,10 +30,13 @@ export interface Config {
     saveFailFallback: boolean
     listCommandName: string
     refreshCommandName: string
+    createCommandName: string
+    addAliasCommandName: string
     matchMode: 'fuzzy' | 'exact' | 'none'
 
     userLimits: { userId: string; sizeLimit: number }[]
     groupLimits: { guildId: string; sizeLimit: number }[]
+    createLimits: { userId: string }[]
     maxout: number
     debugMode: boolean
 }
@@ -43,6 +46,8 @@ export const Config: Schema<Config> =
         Schema.object({
             listCommandName: Schema.string().default('图库列表').description('图库列表指令名（可自定义）'),
             refreshCommandName: Schema.string().default('刷新图库').description('刷新图库缓存指令名（可自定义）'),
+            createCommandName: Schema.string().default('创建关键词').description('创建文件夹指令名（可自定义）'),
+            addAliasCommandName: Schema.string().default('创建别名').description('创建别名指令名（可自定义）'),
         }).description('图库指令'),
         Schema.object({
             sendCommandName: Schema.string().default('发图').description('发图指令名（可自定义）'),
@@ -75,6 +80,11 @@ export const Config: Schema<Config> =
             })).role('table')
                 .description('群组上传限制。可包含 guildId 为 default 的行作为群组默认值，0 表示禁止上传。')
                 .default([{ guildId: 'default', sizeLimit: 0 }]),
+            createLimits: Schema.array(Schema.object({
+                userId: Schema.string().required().description('用户 ID'),
+            })).role('table')
+                .description('允许创建文件夹和别名的用户列表。')
+                .default([]),
         }).description('权限设置'),
         Schema.object({
             debugMode: Schema.boolean().default(false).description('启用调试日志').experimental(),
@@ -468,6 +478,132 @@ export function apply(ctx: Context, config: Config) {
                 return `图库缓存已刷新，当前共有 ${folderCount} 个文件夹`
             } catch (error) {
                 return `刷新失败: ${error.message}`
+            }
+        })
+
+    // 创建关键词指令
+    ctx.command(`${config.createCommandName} <keyword> [aliases...]`)
+        .action(async ({ session }, keyword: string, ...aliases: string[]) => {
+            if (!keyword) {
+                return '请完整输入指令+文件夹名，例如：“创建关键词 文件夹名 别名1”'
+            }
+
+            const createLimits = config.createLimits || []
+            const allowedUsers = createLimits.map(item => item.userId)
+            if (!allowedUsers.includes(session.userId)) {
+                return
+            }
+
+            const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_')
+            const mainPart = sanitize(keyword)
+            const aliasParts = aliases.map(a => sanitize(a)).filter(a => a.length > 0)
+
+            if (mainPart.length === 0) {
+                return '关键词无效（过滤后为空）。'
+            }
+
+            const folders = await getFolders()
+            const allAliases = [mainPart, ...aliasParts]
+
+            let exists = false
+            for (const folder of folders) {
+                if (!folder.isDirectory()) continue
+                const parts = folder.name.split('-')
+                if (parts.some(p => allAliases.includes(p))) {
+                    exists = true
+                    break
+                }
+            }
+
+            if (exists) {
+                return '要创建的关键词或别名在实际文件夹系统中已存在！无法创建。'
+            }
+
+            const newFolderName = allAliases.join('-')
+            const newFolderPath = join(config.imagePath, newFolderName)
+
+            try {
+                await fs.mkdir(newFolderPath, { recursive: true })
+                clearCache()
+                const aliasesText = aliasParts.length > 0 ? `，别名：${aliasParts.join('、')}` : ''
+                return `关键词「${mainPart}」创建成功${aliasesText}！`
+            } catch (error) {
+                loginfo('创建分类失败:', error)
+                return `创建失败: ${error.message}`
+            }
+        })
+
+    // 创建别名指令
+    ctx.command(`${config.addAliasCommandName} <keyword> [aliases...]`)
+        .action(async ({ session }, keyword: string, ...aliases: string[]) => {
+            if (!keyword || aliases.length === 0) {
+                return '请完整输入正确指令，例如：“创建别名 关键词 别名1 别名2”'
+            }
+
+            const createLimits = config.createLimits || []
+            const allowedUsers = createLimits.map(item => item.userId)
+            if (!allowedUsers.includes(session.userId)) {
+                return
+            }
+
+            const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_')
+            const mainPart = sanitize(keyword)
+            const aliasParts = aliases.map(a => sanitize(a)).filter(a => a.length > 0)
+
+            if (aliasParts.length === 0) {
+                return '别名无效（过滤后为空）。'
+            }
+
+            const folders = await getFolders()
+            let targetFolder = null
+            let targetOldName = ''
+            let targetParts: string[] = []
+
+            for (const folder of folders) {
+                if (!folder.isDirectory()) continue
+                const parts = folder.name.split('-')
+                if (parts.includes(mainPart)) {
+                    targetFolder = folder
+                    targetOldName = folder.name
+                    targetParts = parts
+                    break
+                }
+            }
+
+            if (!targetFolder) {
+                return '未找到指定关键词文件夹，请完整输入正确指令'
+            }
+
+            let existsAnywhere = false
+            for (const folder of folders) {
+                if (!folder.isDirectory()) continue
+                const parts = folder.name.split('-')
+                if (aliasParts.some(a => parts.includes(a))) {
+                    existsAnywhere = true
+                    break
+                }
+            }
+
+            if (existsAnywhere) {
+                return '要添加的别名已经存在于现有关键词或别名中，无法添加。'
+            }
+
+            const newAliases = aliasParts.filter(a => !targetParts.includes(a))
+            if (newAliases.length === 0) {
+                return '所有别名都已经存在于该关键词中。'
+            }
+
+            const newFolderName = [...targetParts, ...newAliases].join('-')
+            const oldPath = join(config.imagePath, targetOldName)
+            const newPath = join(config.imagePath, newFolderName)
+
+            try {
+                await fs.rename(oldPath, newPath)
+                clearCache()
+                return `别名添加成功！该关键词现在包含：${[...targetParts, ...newAliases].join('、')}。`
+            } catch (error) {
+                loginfo('创建别名失败:', error)
+                return `添加别名失败: ${error.message}`
             }
         })
 
