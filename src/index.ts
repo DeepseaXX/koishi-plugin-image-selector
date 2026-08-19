@@ -196,11 +196,109 @@ export function apply(ctx: Context, config: Config) {
         }
     }
 
+    // 递归提取元素中的图片与视频节点（支持普通消息与 OneBot 协议合并转发消息）
+    async function extractMediaElements(elements: h[], session: Session, visitedIds = new Set<string>()): Promise<h[]> {
+        const mediaList: h[] = []
+
+        for (const el of elements) {
+            if (!el) continue
+
+            // 1. 直接是图片/视频元素
+            if (['img', 'mface', 'image', 'video'].includes(el.type)) {
+                mediaList.push(el)
+            }
+            // 2. 普通 message 容器节点，递归其 children
+            else if (el.type === 'message') {
+                if (el.children && el.children.length > 0) {
+                    const subMedia = await extractMediaElements(el.children, session, visitedIds)
+                    mediaList.push(...subMedia)
+                }
+            }
+            // 3. forward 合并转发节点（包含 OneBot 协议下的转发记录）
+            else if (el.type === 'forward') {
+                // 如果节点下自带子节点（如已经展开的 message 节点）
+                if (el.children && el.children.length > 0) {
+                    const subMedia = await extractMediaElements(el.children, session, visitedIds)
+                    mediaList.push(...subMedia)
+                }
+
+                // 如果带有 forward id 且尚未遍历过
+                const forwardId = el.attrs?.id || el.attrs?.messageId
+                if (forwardId && !visitedIds.has(forwardId)) {
+                    visitedIds.add(forwardId)
+                    loginfo(`发现合并转发节点 ID: ${forwardId}，尝试拉取子消息 (OneBot 适配)`)
+
+                    try {
+                        let fetchedElements: h[] = []
+
+                        // 优先尝试标准 session.bot.getMessage
+                        if (session.bot && typeof session.bot.getMessage === 'function') {
+                            try {
+                                const msg = await session.bot.getMessage(session.channelId, forwardId)
+                                if (msg && msg.elements && msg.elements.length > 0) {
+                                    fetchedElements = msg.elements
+                                } else if (msg && msg.content) {
+                                    fetchedElements = h.parse(msg.content)
+                                }
+                            } catch (err) {
+                                loginfo(`session.bot.getMessage 获取转发消息 ${forwardId} 失败: ${err.message}`)
+                            }
+                        }
+
+                        // 针对 OneBot v11 特有 API 进行兜底 (internal.get_forward_msg 或 internal.getForwardMsg)
+                        if (fetchedElements.length === 0 && session.bot && session.bot.internal) {
+                            const internal = session.bot.internal
+                            let forwardData: any = null
+
+                            try {
+                                if (typeof internal.getForwardMsg === 'function') {
+                                    forwardData = await internal.getForwardMsg(forwardId)
+                                } else if (typeof internal.get_forward_msg === 'function') {
+                                    forwardData = await internal.get_forward_msg({ id: forwardId, message_id: forwardId })
+                                }
+                            } catch (err) {
+                                loginfo(`OneBot internal.get_forward_msg 扩展接口调用失败: ${err.message}`)
+                            }
+
+                            if (forwardData) {
+                                const rawMessages = forwardData.messages || (Array.isArray(forwardData) ? forwardData : [])
+                                for (const rawMsg of rawMessages) {
+                                    const content = rawMsg.content || rawMsg.message
+                                    if (typeof content === 'string') {
+                                        fetchedElements.push(...h.parse(content))
+                                    } else if (Array.isArray(content)) {
+                                        // CQCode/Segment 数组
+                                        for (const seg of content) {
+                                            if (typeof seg === 'string') {
+                                                fetchedElements.push(...h.parse(seg))
+                                            } else if (seg && seg.type) {
+                                                fetchedElements.push(h(seg.type, seg.data || seg.attrs || {}))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (fetchedElements.length > 0) {
+                            const subMedia = await extractMediaElements(fetchedElements, session, visitedIds)
+                            mediaList.push(...subMedia)
+                        }
+                    } catch (e) {
+                        loginfo(`解析合并转发节点 ${forwardId} 出错:`, e)
+                    }
+                }
+            }
+        }
+
+        return mediaList
+    }
+
     // 存图指令
     ctx.command(`${config.saveCommandName} [关键词] [...图片]`, { captureQuote: false })
         .usage(`用法：${config.saveCommandName} [关键词] [图片]
 直接带图：${config.saveCommandName} 猫图 [图片]
-引用存图：回复图片消息后发送 ${config.saveCommandName} [关键词]
+引用存图：回复图片消息或合并转发聊天记录后发送 ${config.saveCommandName} [关键词]（注：合并转发存图功能主要针对 OneBot 协议支持）
 交互式：直接发送 ${config.saveCommandName}，按提示操作
 
 关键词为文件夹名或别名（格式：主名-别名1-别名2），匹配失败时根据配置存入临时目录或取消。`)
@@ -215,36 +313,53 @@ export function apply(ctx: Context, config: Config) {
                 }
             }
 
-            // 优先检查引用消息中的图片
-            if (session.quote) {
-                loginfo('检测到引用消息，尝试从引用消息中提取图片')
-                const quoteElements = h.parse(session.quote.content)
-                const quoteImages = quoteElements.filter(el => ['img', 'mface', 'image', 'video'].includes(el.type))
+            let allImages: h[] = []
 
-                if (quoteImages.length > 0) {
-                    loginfo('从引用消息中找到图片:', quoteImages.length, '个')
-                    图片 = [session.quote.content]
+            // 优先检查引用消息中的图片/媒体（支持普通图片回复和 OneBot 合并转发回复）
+            if (session.quote) {
+                loginfo('检测到引用消息，尝试从引用消息中提取图片/视频 (支持合并转发)')
+                const quoteElements = h.parse(session.quote.content)
+                const extractedFromQuote = await extractMediaElements(quoteElements, session)
+
+                // 如果从 quote.content 没有解析出媒体，但包含 quote.id，尝试拉取完整的引用消息对象
+                if (extractedFromQuote.length === 0 && session.quote.id) {
+                    try {
+                        const fullQuote = await session.bot?.getMessage?.(session.channelId, session.quote.id)
+                        if (fullQuote) {
+                            const fullElements = fullQuote.elements || (fullQuote.content ? h.parse(fullQuote.content) : [])
+                            const extra = await extractMediaElements(fullElements, session)
+                            extractedFromQuote.push(...extra)
+                        }
+                    } catch (err) {
+                        loginfo('拉取完整引用消息失败:', err)
+                    }
+                }
+
+                if (extractedFromQuote.length > 0) {
+                    loginfo(`从引用消息/合并转发记录中成功提取到 ${extractedFromQuote.length} 个媒体文件`)
+                    allImages.push(...extractedFromQuote)
                 }
             }
 
-            // 解析所有图片参数
-            let allImages = []
-            for (const 图片Item of 图片) {
-                const elements = h.parse(图片Item)
-                const images = elements.filter(el => ['img', 'mface', 'image', 'video'].includes(el.type))
-                allImages.push(...images)
+            // 如果引用中没有图片，解析直接传入的参数中的图片
+            if (allImages.length === 0) {
+                for (const 图片Item of 图片) {
+                    const elements = h.parse(图片Item)
+                    const media = await extractMediaElements(elements, session)
+                    allImages.push(...media)
+                }
             }
 
             // 如果没有图片(参数或引用)，尝试交互式获取
             if (allImages.length === 0) {
-                await session.send('请发送图片或视频')
+                await session.send('请发送图片、视频或合并转发聊天记录')
                 const promptResult = await session.prompt(config.promptTimeout * 1000)
                 if (!promptResult) {
                     return '未收到图片或视频'
                 }
                 const elements = h.parse(promptResult)
-                const images = elements.filter(el => ['img', 'mface', 'image', 'video'].includes(el.type))
-                allImages.push(...images)
+                const media = await extractMediaElements(elements, session)
+                allImages.push(...media)
             }
 
             if (allImages.length === 0) {
