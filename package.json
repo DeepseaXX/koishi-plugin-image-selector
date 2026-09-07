@@ -1,9 +1,9 @@
 {
   "name": "@deepseaxx/koishi-plugin-image-selector",
-  "description": "A powerful Koishi plugin for random image/video sending and user image storage with alias system support",
+  "description": "Organize images and videos into keyword folders, then send or save them easily in Koishi",
   "preview": true,
   "hidden": true,
-  "version": "0.5.2",
+  "version": "0.7.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -18,8 +18,8 @@
   "koishi": {
     "browser": true,
     "description": {
-      "en": "Supports random image sending and user image storage. Features alias folder matching, multiple storage methods, customizable filename templates, and intelligent file type detection.",
-      "zh": "支持随机图片发送和用户存图功能。包含别名文件夹匹配、多种存图方式、自定义文件名模板和智能文件类型检测等特性。"
+      "en": "Organize images and videos by keyword folders, send random files, and save media from nested forwarded messages when the adapter provides readable content, with aliases and upload limits.",
+      "zh": "按关键词文件夹整理图片和视频，支持随机发图、回复及多层合并记录存图（需适配器提供可读取内容）、别名匹配和上传权限限制。"
     }
   },
   "keywords": [
