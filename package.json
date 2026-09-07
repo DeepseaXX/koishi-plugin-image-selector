@@ -3,7 +3,7 @@
   "description": "Organize images and videos into keyword folders, then send or save them easily in Koishi",
   "preview": true,
   "hidden": true,
-  "version": "0.6.3",
+  "version": "0.7.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -18,8 +18,8 @@
   "koishi": {
     "browser": true,
     "description": {
-      "en": "Organize images and videos by keyword folders, send random files, and save media from messages with aliases and upload limits.",
-      "zh": "按关键词文件夹整理图片和视频，支持随机发图、回复存图、别名匹配和上传权限限制。"
+      "en": "Organize images and videos by keyword folders, send random files, and save media from nested forwarded messages when the adapter provides readable content, with aliases and upload limits.",
+      "zh": "按关键词文件夹整理图片和视频，支持随机发图、回复及多层合并记录存图（需适配器提供可读取内容）、别名匹配和上传权限限制。"
     }
   },
   "keywords": [

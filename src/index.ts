@@ -1,4 +1,5 @@
 import { Context, Schema, h, Session } from 'koishi'
+import { createMediaCollector } from './media'
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
@@ -9,7 +10,7 @@ export const inject = {
 };
 
 export const usage = `
-把图片和视频按文件夹整理好，发送关键词即可随机发出对应内容；也可以回复图片、视频或合并转发聊天记录进行存图。
+把图片和视频按文件夹整理好，发送关键词即可随机发出对应内容；也可以回复图片、视频或多层嵌套的合并转发聊天记录进行存图。
 
 ### 快速开始
 - 直接发送关键词，例如：猫图 或 猫图 3。
@@ -19,7 +20,9 @@ export const usage = `
 
 文件夹名称使用 主关键词-别名1-别名2 的格式，每一段都可以触发发图。
 
-普通图片和视频通常可以跨适配器处理。合并转发的读取取决于适配器是否提供可读取的转发内容；OneBot v11 有额外接口兜底，支持通常更完整。
+合并记录会按消息顺序逐层提取图片和视频；部分记录读取失败时，继续保存其他可读取媒体并提示原因。默认最多展开 32 层、处理 10000 个节点，每次读取等待 15 秒，可在存图设置中调整。
+
+普通图片和视频通常可以跨适配器处理。折叠的合并记录优先通过 OneBot 转发接口读取；其他适配器需提供已展开内容，或能通过标准消息接口读取相应记录。
 
 <a target="_blank" href="https://www.npmjs.com/package/@deepseaxx/koishi-plugin-image-selector">➤ 详细配置及进阶用法文档</a>
 `;
@@ -32,6 +35,9 @@ export interface Config {
     saveCommandName: string
     sendCommandName: string
     saveFailFallback: boolean
+    forwardMaxDepth: number
+    forwardMaxNodes: number
+    forwardTimeout: number
     listCommandName: string
     refreshCommandName: string
     createCommandName: string
@@ -70,6 +76,9 @@ export const Config: Schema<Config> =
                 .default("${date}-${time}-${index}-${guildId}-${userId}${ext}").description('保存后的文件名模板。可用变量：${userId}、${username}、${timestamp}、${date}、${time}、${index}、${ext}、${guildId}、${channelId}'),
             promptTimeout: Schema.number().default(30).description('机器人等待你发送图片或视频的时间，单位为秒'),
             saveFailFallback: Schema.boolean().default(true).description('找不到对应分类时，开启则保存到临时目录，关闭则取消保存'),
+            forwardMaxDepth: Schema.number().min(1).max(256).step(1).default(32).description('最多展开多少层合并聊天记录。达到上限时保留已读取的媒体并提示。'),
+            forwardMaxNodes: Schema.number().min(1).max(100000).step(1).default(10000).description('一次存图最多检查多少个消息、容器或媒体节点。达到上限时停止继续读取并提示。'),
+            forwardTimeout: Schema.number().min(1).max(120).default(15).description('每次读取引用消息或合并记录的最长等待时间，单位为秒。超时后继续处理其他记录。'),
         }).description('存图功能'),
         Schema.object({
             userLimits: Schema.array(Schema.object({
@@ -200,177 +209,86 @@ export function apply(ctx: Context, config: Config) {
         }
     }
 
-    // 递归提取元素中的图片与视频节点（支持普通消息与 OneBot 协议合并转发消息）
-    async function extractMediaElements(elements: h[], session: Session, visitedIds = new Set<string>()): Promise<h[]> {
-        const mediaList: h[] = []
-
-        for (const el of elements) {
-            if (!el) continue
-
-            // 1. 直接是图片/视频元素
-            if (['img', 'mface', 'image', 'video'].includes(el.type)) {
-                mediaList.push(el)
-            }
-            // 2. 普通 message 容器节点，递归其 children
-            else if (el.type === 'message') {
-                if (el.children && el.children.length > 0) {
-                    const subMedia = await extractMediaElements(el.children, session, visitedIds)
-                    mediaList.push(...subMedia)
-                }
-            }
-            // 3. forward 合并转发节点（包含 OneBot 协议下的转发记录）
-            else if (el.type === 'forward') {
-                // 如果节点下自带子节点（如已经展开的 message 节点）
-                if (el.children && el.children.length > 0) {
-                    const subMedia = await extractMediaElements(el.children, session, visitedIds)
-                    mediaList.push(...subMedia)
-                }
-
-                // 如果带有 forward id 且尚未遍历过
-                const forwardId = el.attrs?.id || el.attrs?.messageId
-                if (forwardId && !visitedIds.has(forwardId)) {
-                    visitedIds.add(forwardId)
-                    loginfo(`发现合并转发节点 ID: ${forwardId}，尝试拉取子消息 (OneBot 适配)`)
-
-                    try {
-                        let fetchedElements: h[] = []
-
-                        // 优先尝试标准 session.bot.getMessage
-                        if (session.bot && typeof session.bot.getMessage === 'function') {
-                            try {
-                                const msg = await session.bot.getMessage(session.channelId, forwardId)
-                                if (msg && msg.elements && msg.elements.length > 0) {
-                                    fetchedElements = msg.elements
-                                } else if (msg && msg.content) {
-                                    fetchedElements = h.parse(msg.content)
-                                }
-                            } catch (err) {
-                                loginfo(`session.bot.getMessage 获取转发消息 ${forwardId} 失败: ${err.message}`)
-                            }
-                        }
-
-                        // 针对 OneBot v11 特有 API 进行兜底 (internal.get_forward_msg 或 internal.getForwardMsg)
-                        if (fetchedElements.length === 0 && session.bot && session.bot.internal) {
-                            const internal = session.bot.internal
-                            let forwardData: any = null
-
-                            try {
-                                if (typeof internal.getForwardMsg === 'function') {
-                                    forwardData = await internal.getForwardMsg(forwardId)
-                                } else if (typeof internal.get_forward_msg === 'function') {
-                                    forwardData = await internal.get_forward_msg({ id: forwardId, message_id: forwardId })
-                                }
-                            } catch (err) {
-                                loginfo(`OneBot internal.get_forward_msg 扩展接口调用失败: ${err.message}`)
-                            }
-
-                            if (forwardData) {
-                                const rawMessages = forwardData.messages || (Array.isArray(forwardData) ? forwardData : [])
-                                for (const rawMsg of rawMessages) {
-                                    const content = rawMsg.content || rawMsg.message
-                                    if (typeof content === 'string') {
-                                        fetchedElements.push(...h.parse(content))
-                                    } else if (Array.isArray(content)) {
-                                        // CQCode/Segment 数组
-                                        for (const seg of content) {
-                                            if (typeof seg === 'string') {
-                                                fetchedElements.push(...h.parse(seg))
-                                            } else if (seg && seg.type) {
-                                                fetchedElements.push(h(seg.type, seg.data || seg.attrs || {}))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if (fetchedElements.length > 0) {
-                            const subMedia = await extractMediaElements(fetchedElements, session, visitedIds)
-                            mediaList.push(...subMedia)
-                        }
-                    } catch (e) {
-                        loginfo(`解析合并转发节点 ${forwardId} 出错:`, e)
-                    }
-                }
-            }
-        }
-
-        return mediaList
-    }
-
     // 存图指令
     ctx.command(`${config.saveCommandName} [关键词] [...图片]`, { captureQuote: false })
         .usage(`用法：${config.saveCommandName} [关键词] [图片]
 1. 直接带图：${config.saveCommandName} 猫图 [图片]
-2. 回复图片、视频或合并转发后发送：${config.saveCommandName} 猫图
+2. 回复图片、视频或多层合并转发后发送：${config.saveCommandName} 猫图
 3. 直接发送 ${config.saveCommandName}，按提示依次发送媒体和分类名称
 
 关键词可以是文件夹名，也可以是别名。文件夹格式为：主名-别名1-别名2。
 找不到对应分类时，会根据设置保存到临时目录或取消保存。
 
-普通引用通常可以处理；合并转发需要适配器提供可读取的转发内容，OneBot v11 支持额外的接口兜底。`)
+合并记录会逐层读取，部分失败时继续保存其他媒体并提示。默认最多 32 层、10000 个节点，每次读取等待 15 秒，可在存图设置中调整。
+折叠记录优先使用 OneBot 转发接口；其他适配器需提供已展开内容或支持标准消息接口读取。`)
         .userFields(['id', 'name', 'authority'])
         .action(async ({ session }, keyword, ...图片) => {
-            // 预处理：检查第一参数是否为图片
+            // 不带关键词直接附媒体/合并记录时，后续再询问分类。
             if (keyword) {
                 const elements = h.parse(keyword)
-                if (elements.some(el => ['img', 'mface', 'image', 'video'].includes(el.type))) {
+                if (elements.some(el => ['img', 'mface', 'image', 'video', 'forward', 'message', 'node', 'figure', 'json', 'onebot:json'].includes(el.type))
+                    || /\[CQ:(?:image|mface|video|forward|node|json),/.test(keyword)) {
                     图片.unshift(keyword)
                     keyword = undefined
                 }
             }
 
+            const collector = createMediaCollector(session, {
+                maxDepth: config.forwardMaxDepth,
+                maxNodes: config.forwardMaxNodes,
+                timeoutMs: (config.forwardTimeout ?? 15) * 1000,
+                log: loginfo,
+                setTimeout: (callback, delay) => ctx.setTimeout(callback, delay),
+            })
             let allImages: h[] = []
 
             // 优先检查引用消息中的图片/媒体（支持普通图片回复和 OneBot 合并转发回复）
             if (session.quote) {
                 loginfo('检测到引用消息，尝试从引用消息中提取图片/视频 (支持合并转发)')
-                const quoteElements = h.parse(session.quote.content)
-                const extractedFromQuote = await extractMediaElements(quoteElements, session)
+                const extractedFromQuote = await collector.collect(session.quote)
 
                 // 如果从 quote.content 没有解析出媒体，但包含 quote.id，尝试拉取完整的引用消息对象
-                if (extractedFromQuote.length === 0 && session.quote.id) {
-                    try {
-                        const fullQuote = await session.bot?.getMessage?.(session.channelId, session.quote.id)
-                        if (fullQuote) {
-                            const fullElements = fullQuote.elements || (fullQuote.content ? h.parse(fullQuote.content) : [])
-                            const extra = await extractMediaElements(fullElements, session)
-                            extractedFromQuote.push(...extra)
-                        }
-                    } catch (err) {
-                        loginfo('拉取完整引用消息失败:', err)
+                if (extractedFromQuote.media.length === 0 && session.quote.id) {
+                    const fullQuote = await collector.readQuote(session.quote.id)
+                    if (fullQuote) {
+                        const extra = await collector.collect(fullQuote)
+                        extractedFromQuote.media.push(...extra.media)
                     }
                 }
 
-                if (extractedFromQuote.length > 0) {
-                    loginfo(`从引用消息/合并转发记录中成功提取到 ${extractedFromQuote.length} 个媒体文件`)
-                    allImages.push(...extractedFromQuote)
+                if (extractedFromQuote.media.length > 0) {
+                    loginfo(`从引用消息/合并转发记录中成功提取到 ${extractedFromQuote.media.length} 个媒体文件`)
+                    allImages.push(...extractedFromQuote.media)
                 }
             }
 
             // 如果引用中没有图片，解析直接传入的参数中的图片
             if (allImages.length === 0) {
                 for (const 图片Item of 图片) {
-                    const elements = h.parse(图片Item)
-                    const media = await extractMediaElements(elements, session)
-                    allImages.push(...media)
+                    const result = await collector.collect(图片Item)
+                    allImages.push(...result.media)
                 }
             }
 
-            // 如果没有图片(参数或引用)，尝试交互式获取
-            if (allImages.length === 0) {
+            // 没有媒体且没有读取错误时，才提示用户继续上传。
+            if (allImages.length === 0 && collector.warnings.length === 0) {
                 await session.send('请发送要保存的图片、视频或合并转发聊天记录。')
                 const promptResult = await session.prompt(config.promptTimeout * 1000)
                 if (!promptResult) {
                     return '没有收到图片或视频，这次存图已取消。'
                 }
-                const elements = h.parse(promptResult)
-                const media = await extractMediaElements(elements, session)
-                allImages.push(...media)
+                const result = await collector.collect(promptResult)
+                allImages.push(...result.media)
             }
 
             if (allImages.length === 0) {
-                return '没有找到可保存的图片或视频。'
+                return collector.warnings.length
+                    ? `未能完整读取消息，本次没有找到可保存的图片或视频。原因：${collector.warnings.join('；')}。`
+                    : '没有找到可保存的图片或视频。'
+            }
+
+            if (collector.warnings.length) {
+                await session.send(`消息未完全读取：${collector.warnings.join('；')}。将继续尝试保存已找到的 ${allImages.length} 个媒体文件。`)
             }
 
             // 检查是否已有分类（关键词），如果没有则询问
