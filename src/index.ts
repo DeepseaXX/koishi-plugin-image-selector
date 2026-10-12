@@ -3,6 +3,7 @@ import { createMediaCollector } from './media'
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 export const name = 'image-selector'
 export const inject = {
@@ -745,13 +746,14 @@ export function apply(ctx: Context, config: Config) {
             for (let i = 0; i < count; i++) {
                 const randomFile = mediaFiles[Math.floor(Math.random() * mediaFiles.length)]
                 const filePath = join(folderPath, randomFile)
+                const fileUrl = pathToFileURL(filePath).href
 
                 loginfo(`发送文件 ${i + 1}/${count}:`, randomFile)
 
                 const isVideo = /\.(mp4|mov|avi)$/i.test(randomFile)
                 const element = isVideo
-                    ? h.video(filePath)
-                    : h.image(filePath)
+                    ? h.video(fileUrl)
+                    : h.image(fileUrl)
 
                 await session.send(element)
             }
@@ -759,7 +761,7 @@ export function apply(ctx: Context, config: Config) {
             return true
 
         } catch (error) {
-            loginfo('发图失败:', error)
+            ctx.logger.error('发图失败:', error)
             return false
         }
     }

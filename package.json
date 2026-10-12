@@ -3,7 +3,7 @@
   "description": "Organize images and videos into keyword folders, then send or save them easily in Koishi",
   "preview": true,
   "hidden": true,
-  "version": "0.7.0",
+  "version": "0.7.2",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
